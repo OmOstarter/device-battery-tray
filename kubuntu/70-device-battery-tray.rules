@@ -1,0 +1,7 @@
+# Restrict access to known devices and the active local desktop user.
+# Install before 73-seat-late.rules so logind can apply the uaccess ACL.
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="05ac", ATTRS{idProduct}=="024f", TAG+="uaccess"
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="320f", ATTRS{idProduct}=="706b", TAG+="uaccess"
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="320f", ATTRS{idProduct}=="706e", TAG+="uaccess"
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="35bb", ATTRS{idProduct}=="d3fb", TAG+="uaccess"
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="35bb", ATTRS{idProduct}=="d3fc", TAG+="uaccess"

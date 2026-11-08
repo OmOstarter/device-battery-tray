@@ -1,0 +1,33 @@
+# User settings and hardware status
+preferences.json
+status.json
+*-status.json
+
+# Python environments and caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Build outputs, vendor binaries and release archives
+*.exe
+*.dll
+*.pdb
+*.obj
+*.lib
+*.zip
+*.tar.gz
+*.png
+bin/
+obj/
+dist/
+build/
+
+# Editor and OS metadata
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+.env
+.env.*
