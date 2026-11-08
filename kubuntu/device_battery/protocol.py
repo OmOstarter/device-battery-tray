@@ -1,11 +1,52 @@
 """Read-only battery commands recovered from the installed vendor software."""
 from dataclasses import dataclass, asdict
 from datetime import datetime
+import importlib
+import os
+import sys
 import time
 
 DEFAULT_NAMES = ["LOFREE 小順青春版(100鍵)", "HECATE G3M PRO", "HECATE G3M PRO 升級版"]
 MODEL_IDS = {(0x05AC, 0x024F): 0, (0x320F, 0x706B): 1,
              (0x320F, 0x706E): 1, (0x35BB, 0xD3FB): 2, (0x35BB, 0xD3FC): 2}
+
+
+def load_hid_api():
+    # Linux wheels expose libusb as `hid` and the kernel backend as `hidraw`.
+    # Our udev rules grant access to hidraw, not to libusb's USB device nodes.
+    if sys.platform.startswith("linux"):
+        try:
+            return importlib.import_module("hidraw")
+        except ModuleNotFoundError as error:
+            if error.name != "hidraw":
+                raise
+            # Source builds with only the hidraw backend call that module `hid`.
+    return importlib.import_module("hid")
+
+
+def path_access_error(path):
+    path = os.fsdecode(path)
+    if not path.startswith("/dev/hidraw"):
+        return ""
+    if not os.path.exists(path):
+        return f"裝置節點不存在：{path}；請確認裝置未拔除，且執行環境可存取主機的 HID 裝置"
+    if not os.access(path, os.R_OK | os.W_OK):
+        return f"無權限存取 {path}；請安裝 udev 規則後重新插拔接收器"
+    return ""
+
+
+def list_devices(api=None):
+    api = api if api is not None else load_hid_api()
+    result = []
+    for info in api.enumerate():
+        if model_slot(info) is None:
+            continue
+        entry = {k: os.fsdecode(v) if isinstance(v, bytes) else v for k, v in info.items()}
+        entry["control_interface"] = identify(info) is not None
+        entry["backend"] = getattr(api, "__name__", "custom")
+        entry["access_error"] = path_access_error(info["path"])
+        result.append(entry)
+    return result
 
 
 def model_slot(info):
@@ -55,7 +96,7 @@ def identify(info):
     vid, pid, page = (info.get(k) for k in ("vendor_id", "product_id", "usage_page"))
     if (vid, pid, page) == (0x05AC, 0x024F, 0xFF02):
         # Wired Air100 has two FF02 collections on Windows; Col05 carries queries.
-        path = info.get("path", b"").decode(errors="replace").lower()
+        path = os.fsdecode(info.get("path", b"")).lower()
         if "#" in path and "col05" not in path:
             return None
         return 0
@@ -84,6 +125,8 @@ class Reading:
     time: str = ""
     raw: str = ""
     present: bool = False
+    backend: str = ""
+    path: str = ""
 
     def to_dict(self):
         return asdict(self)
@@ -109,9 +152,11 @@ def exchange(device, slot, request, timeout=0.8):
 
 def poll(names=None, api=None):
     if api is None:
-        import hid as api
+        api = load_hid_api()
     names = names or DEFAULT_NAMES
     readings = [Reading(i, names[i], time=datetime.now().strftime("%H:%M:%S")) for i in range(3)]
+    for reading in readings:
+        reading.backend = getattr(api, "__name__", "custom")
     seen = set()
     for info in api.enumerate():
         model = model_slot(info)
@@ -128,6 +173,7 @@ def poll(names=None, api=None):
         seen.add(key)
         result = readings[slot]
         result.connection = connection(slot, info)
+        result.path = os.fsdecode(info["path"])
         device = api.device()
         try:
             device.open_path(info["path"])
@@ -142,7 +188,7 @@ def poll(names=None, api=None):
                 except TimeoutError:
                     result.status = "未收到電量回應"
         except OSError as error:
-            result.status = "無法存取裝置：" + str(error)
+            result.status = path_access_error(info["path"]) or "無法存取裝置：" + str(error)
         finally:
             device.close()
     return readings

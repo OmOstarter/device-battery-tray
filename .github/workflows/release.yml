@@ -1,0 +1,76 @@
+name: Build and publish release
+on:
+  push:
+    branches: [main]
+    paths: [VERSION, .github/workflows/release.yml]
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: release
+  cancel-in-progress: false
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libgl1 libxkbcommon-x11-0 libxcb-cursor0
+          python -m pip install -r kubuntu/requirements.txt
+      - name: Test
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          cd kubuntu
+          python -m unittest discover -s tests -v
+          bash -n install.sh uninstall.sh packaging/postinst packaging/postrm
+      - name: Build Linux packages
+        run: |
+          python kubuntu/build-deb.py
+          version=$(tr -d '\n' < VERSION)
+          tar --exclude=__pycache__ --exclude='*.pyc' --exclude=.venv -czf "dist/device-battery-tray-kubuntu-$version.tar.gz" kubuntu VERSION README.md RELEASE_NOTES.md
+          dpkg-deb --info "dist/device-battery-tray_${version}_all.deb"
+          dpkg-deb --contents "dist/device-battery-tray_${version}_all.deb"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: dist/*
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Windows
+        shell: pwsh
+        run: |
+          ./windows/build.ps1
+          New-Item -ItemType Directory -Path dist
+          $version = (Get-Content VERSION).Trim()
+          Compress-Archive -Path windows/DeviceBatteryTray.exe,windows/使用說明.md -DestinationPath "dist/device-battery-tray-windows-$version.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: dist/*
+  publish:
+    needs: [linux, windows]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(tr -d '\n' < VERSION)
+          (cd dist && sha256sum * > SHA256SUMS)
+          if gh release view "v$version" >/dev/null 2>&1; then
+            echo "Release v$version already exists; leaving its assets unchanged."
+            exit 0
+          fi
+          gh release create "v$version" dist/* --target "$GITHUB_SHA" --title "v$version · Kubuntu 電量讀取修正" --notes-file RELEASE_NOTES.md --latest

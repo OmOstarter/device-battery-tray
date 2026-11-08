@@ -10,18 +10,13 @@ def main():
     parser = argparse.ArgumentParser(description="LOFREE / HECATE 電量系統匣工具")
     parser.add_argument("--background", action="store_true", help="只顯示系統匣圖示")
     parser.add_argument("--diagnose", action="store_true", help="讀取真實電量並輸出 JSON")
-    parser.add_argument("--list-devices", action="store_true", help="列出支援裝置的 HID 控制介面")
+    parser.add_argument("--list-devices", action="store_true", help="列出支援裝置的全部 HID 介面、後端及存取狀態")
     parser.add_argument("--preview-ui", type=Path, help="輸出示例介面 PNG，不查詢硬體")
     args = parser.parse_args()
     try:
         if args.list_devices:
-            import hid
-            from device_battery.protocol import identify
-            result = []
-            for info in hid.enumerate():
-                if identify(info) is not None:
-                    result.append({k: v.decode(errors="replace") if isinstance(v, bytes) else v for k, v in info.items()})
-            print(json.dumps(result, ensure_ascii=False, indent=2))
+            from device_battery.protocol import list_devices
+            print(json.dumps(list_devices(), ensure_ascii=False, indent=2))
             return 0
         if args.diagnose:
             from device_battery.protocol import poll

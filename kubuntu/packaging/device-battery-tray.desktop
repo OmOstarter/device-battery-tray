@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Device Battery Tray
+Name[zh_TW]=裝置電量
+Comment=Keyboard and mouse battery monitor
+Exec=/usr/bin/device-battery-tray
+Icon=input-mouse
+Terminal=false
+Categories=Utility;
+StartupNotify=false

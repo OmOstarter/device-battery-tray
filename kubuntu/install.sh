@@ -18,9 +18,17 @@ if [[ "$source_dir" != "$app_dir" ]]; then
     mkdir -p -- "$app_dir/device_battery"
     cp -- "$source_dir"/device_battery/*.py "$app_dir/device_battery/"
 fi
-if ! python3 -m venv "$app_dir/.venv"; then
-    echo '請先執行：sudo apt install python3-venv，然後重試。' >&2
-    exit 1
+venv_python="$app_dir/.venv/bin/python"
+# Reuse a working environment during updates. Re-running venv rewrites its
+# activation scripts, which may be read-only even when Python works normally.
+if [[ -x "$venv_python" ]] && "$venv_python" -c 'import sys, pip; assert sys.version_info >= (3, 10); assert sys.prefix != sys.base_prefix' 2>/dev/null; then
+    echo '沿用既有 Python 虛擬環境。'
+else
+    if ! python3 -m venv "$app_dir/.venv"; then
+        printf '無法建立虛擬環境：%s\n' "$app_dir/.venv" >&2
+        echo '請依上方原始錯誤排查：Permission denied 表示檔案／目錄權限問題；只有缺少 venv 或 ensurepip 時才需安裝 python3-venv。' >&2
+        exit 1
+    fi
 fi
 "$app_dir/.venv/bin/python" -m pip install -r "$app_dir/requirements.txt"
 "$app_dir/.venv/bin/python" - "$app_dir" <<'PY'

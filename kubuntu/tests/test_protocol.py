@@ -1,8 +1,10 @@
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 from device_battery.protocol import (request_compact, request_original, parse_response,
-    identify, connection, battery_color, poll, exchange)
+    identify, connection, battery_color, poll, exchange, load_hid_api,
+    list_devices, path_access_error)
 from device_battery.settings import Settings, desktop_entry
 
 
@@ -41,6 +43,62 @@ class FakeDevice:
 
 
 class ProtocolTests(unittest.TestCase):
+    def test_linux_prefers_hidraw_over_libusb(self):
+        raw_api = object()
+        with patch("device_battery.protocol.sys.platform", "linux"), patch(
+            "device_battery.protocol.importlib.import_module", return_value=raw_api
+        ) as importer:
+            self.assertIs(load_hid_api(), raw_api)
+            importer.assert_called_once_with("hidraw")
+
+    def test_source_build_fallback_and_broken_import(self):
+        missing = ModuleNotFoundError("No module named hidraw", name="hidraw")
+        api = object()
+        with patch("device_battery.protocol.sys.platform", "linux"), patch(
+            "device_battery.protocol.importlib.import_module", side_effect=[missing, api]
+        ) as importer:
+            self.assertIs(load_hid_api(), api)
+            self.assertEqual([c.args[0] for c in importer.call_args_list], ["hidraw", "hid"])
+        with patch("device_battery.protocol.sys.platform", "linux"), patch(
+            "device_battery.protocol.importlib.import_module",
+            side_effect=ModuleNotFoundError("missing dependency", name="dependency")
+        ):
+            with self.assertRaises(ModuleNotFoundError):
+                load_hid_api()
+
+    def test_diagnostics_include_noncontrol_interfaces(self):
+        class API:
+            @staticmethod
+            def enumerate(): return [info(page=1), info(), info(vid=0x1234)]
+        with patch("device_battery.protocol.os.path.exists", return_value=False):
+            entries = list_devices(API)
+        self.assertEqual(len(entries), 2)
+        self.assertFalse(entries[0]["control_interface"])
+        self.assertTrue(entries[1]["control_interface"])
+        self.assertIn("裝置節點不存在", entries[1]["access_error"])
+        self.assertEqual(entries[1]["path"], "/dev/hidraw5")
+
+    def test_access_failures_keep_device_present(self):
+        class DeniedDevice(FakeDevice):
+            def open_path(self, path): raise OSError("open failed")
+        dev = DeniedDevice(b"")
+        class API:
+            @staticmethod
+            def enumerate(): return [info()]
+            @staticmethod
+            def device(): return dev
+        with patch("device_battery.protocol.os.path.exists", return_value=False):
+            result = poll(api=API)[0]
+        self.assertTrue(result.present)
+        self.assertIsNone(result.percent)
+        self.assertIn("裝置節點不存在", result.status)
+        self.assertEqual(result.path, "/dev/hidraw5")
+        self.assertTrue(dev.closed)
+        with patch("device_battery.protocol.os.path.exists", return_value=True), patch(
+            "device_battery.protocol.os.access", return_value=False
+        ):
+            self.assertIn("udev", path_access_error(b"/dev/hidraw5"))
+
     def test_real_vendor_samples(self):
         self.assertEqual(parse_response(0, bytes.fromhex("0804000000845f0130cb0000000000006a")), 95)
         self.assertEqual(parse_response(0, bytes.fromhex("0804000000846400118b000000000000c5")), 100)

@@ -17,7 +17,7 @@ LOFREE 小順青春版(100鍵)、HECATE G3M PRO 與 HECATE G3M PRO 升級版的�
 | 平台 | 狀態 |
 |---|---|
 | Windows | 已在作者電腦實測三個裝置，使用本機已安裝的原廠 DLL。 |
-| Kubuntu / KDE | 實驗版本。跨平台 Qt 介面與協定測試通過，但使用者回報安裝後無法讀取電量；Linux 實機問題尚待修正。 |
+| Kubuntu / KDE | 已由作者於 Kubuntu 26.04 確認可正常讀取電量。修正 Linux HID 後端選擇及更新安裝問題。 |
 
 接收器仍插入但無線裝置休眠、權限不足或電量讀取失敗時，保留灰色圖示並顯示狀態。裝置是否插入與電量讀值分開處理，讓後續新增支援型號時可沿用顯示邏輯。自動偵測最多等待 30 秒，也可立即手動更新；目前仍僅支援下列三個型號。
 
@@ -37,7 +37,9 @@ LOFREE 小順青春版(100鍵)、HECATE G3M PRO 與 HECATE G3M PRO 升級版的�
 
 ## Kubuntu
 
-請先閱讀 [Kubuntu 安裝與診斷說明](kubuntu/README.md)。目前作為測試版提供，尚不能保證在 Kubuntu 上正常讀取電量。
+請先閱讀 [Kubuntu 安裝與診斷說明](kubuntu/README.md)。[最新 release](https://github.com/OmOstarter/device-battery-tray/releases/latest) 提供 `.deb`、Kubuntu 原始碼安裝包與 Windows 程式。
+
+Kubuntu 26.04 可下載 `.deb`，執行 `sudo apt install ./device-battery-tray_0.1.0_all.deb`。若從腳本安裝切換，先結束程式並用舊版 `kubuntu/uninstall.sh` 移除舊的選單及啟動項目，再安裝 `.deb`；設定會保留。其他版本可使用原始碼安裝：
 
 ```bash
 cd kubuntu
@@ -57,7 +59,7 @@ python3 -m venv .venv
 QT_QPA_PLATFORM=offscreen .venv/bin/python -m unittest discover -s tests -v
 ```
 
-目前 11 項 Python／Qt 測試已在 Windows 主機上通過，包含拔除隱藏與接收器無電量仍保留圖示的測試。測試不取代 Kubuntu 實機驗證。
+目前 15 項 Python／Qt 測試通過，包含拔除隱藏、接收器無電量仍保留圖示、Linux 後端選擇及存取錯誤診斷。Kubuntu 電量讀取已由作者實測確認；新 `.deb` 安裝流程仍待桌面實測。
 
 ## 待處理
 
