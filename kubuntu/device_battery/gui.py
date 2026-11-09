@@ -7,8 +7,12 @@ from PySide6.QtGui import QColor, QFont, QFontDatabase, QIcon, QPainter, QPen, Q
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import (QApplication, QWidget, QLabel, QPushButton, QFrame,
     QVBoxLayout, QHBoxLayout, QProgressBar, QInputDialog, QLineEdit, QMenu,
-    QSystemTrayIcon, QCheckBox, QMessageBox)
+    QSystemTrayIcon, QCheckBox, QMessageBox, QDialog, QListWidget, QDialogButtonBox, QScrollArea)
 from .protocol import DEFAULT_NAMES, Reading, battery_color, poll
+from .profile_dialog import ProfileDialog
+from .usb_dialog import UsbMonitor
+from .tray import DeviceTray
+from .system_devices import discover, read_devices
 from .settings import Settings, autostart_path, desktop_entry
 
 
@@ -45,6 +49,8 @@ def label(text="", object_name=""):
 
 class Card(QFrame):
     rename_requested = Signal(int)
+    delete_requested = Signal(int)
+    edit_profile_requested = Signal(int)
 
     def __init__(self, slot):
         super().__init__()
@@ -76,13 +82,22 @@ class Card(QFrame):
         self.progress.setFixedHeight(5)
         layout.addWidget(self.progress)
         bottom = QHBoxLayout()
-        self.updated = label("等待更新", "muted")
+        self.updated = label("等待刷新", "muted")
         bottom.addWidget(self.updated)
         bottom.addStretch()
         rename = QPushButton("重新命名")
         rename.setAccessibleName(f"重新命名第 {slot+1} 個裝置")
         rename.clicked.connect(lambda: self.rename_requested.emit(slot))
         bottom.addWidget(rename)
+        self.edit_profile_button = QPushButton("編輯協定代碼")
+        self.edit_profile_button.setVisible(slot >= 3)
+        self.edit_profile_button.clicked.connect(lambda: self.edit_profile_requested.emit(self.slot))
+        bottom.addWidget(self.edit_profile_button)
+        self.delete_button = QPushButton("刪除")
+        self.delete_button.setAccessibleName(f"刪除第 {slot+1} 個裝置")
+        self.delete_button.setVisible(slot >= 3)
+        self.delete_button.clicked.connect(lambda: self.delete_requested.emit(self.slot))
+        bottom.addWidget(self.delete_button)
         layout.addLayout(bottom)
 
     def update_reading(self, reading):
@@ -95,23 +110,38 @@ class Card(QFrame):
         self.progress.setValue(reading.percent or 0)
         self.progress.setStyleSheet("QProgressBar::chunk{background:"+battery_color(reading.percent)+";border-radius:2px;}")
         self.icon.setPixmap(device_icon(self.slot == 0, reading.percent).pixmap(42, 42))
-        self.updated.setText("更新於 "+reading.time if reading.time else "等待更新")
+        self.updated.setText("刷新於 "+reading.time if reading.time else "等待刷新")
         self.setAccessibleName(f"{reading.name} {self.percent.text()} {description}")
 
 
 class Worker(QThread):
     completed = Signal(list)
 
-    def __init__(self, names):
+    def __init__(self, names, devices=()):
         super().__init__()
         self.names = names.copy()
+        self.devices = [dict(d) for d in devices]
 
     def run(self):
         try:
             readings = poll(self.names)
         except Exception as error:
             readings = [Reading(i, n, status="讀取失敗："+str(error)) for i, n in enumerate(self.names)]
+        readings.extend(read_devices(self.devices))
         self.completed.emit(readings)
+
+
+class ScanWorker(QThread):
+    completed = Signal(list, list)
+
+    def run(self):
+        errors = []
+        try:
+            devices = discover(errors=errors)
+        except Exception as error:
+            devices = []
+            errors.append(str(error))
+        self.completed.emit(devices, errors)
 
 
 class Dashboard(QWidget):
@@ -120,6 +150,7 @@ class Dashboard(QWidget):
         self.settings = settings
         self.preview = preview
         self.worker = None
+        self.scanners = []
         self.trays = []
         self.headings = []
         self.has_polled = False
@@ -136,54 +167,241 @@ class Dashboard(QWidget):
         self.theme_button = QPushButton()
         self.theme_button.clicked.connect(self.toggle_theme)
         header.addWidget(self.theme_button)
+        self.add_button = QPushButton("新增裝置")
+        self.add_button.clicked.connect(self.add_device)
+        header.addWidget(self.add_button)
+        self.code_button = QPushButton("輸入協定代碼")
+        self.code_button.clicked.connect(self.enter_code)
+        header.addWidget(self.code_button)
         root.addLayout(header)
         root.addWidget(label("鍵盤與滑鼠的電量，一眼掌握。", "muted"))
         self.banner = label("", "muted")
         self.banner.setWordWrap(True)
         self.banner.hide()
         root.addWidget(self.banner)
-        self.cards = [Card(i) for i in range(3)]
-        for card in self.cards:
-            root.addWidget(card, 1)
-            card.rename_requested.connect(self.rename)
+        area = QScrollArea()
+        area.setWidgetResizable(True)
+        area.setFrameShape(QFrame.Shape.NoFrame)
+        container = QWidget()
+        self.card_layout = QVBoxLayout(container)
+        self.card_layout.setContentsMargins(0, 0, 0, 0)
+        area.setWidget(container)
+        root.addWidget(area, 1)
+        self.cards = []
+        self.ensure_cards(3 + len(settings.devices))
+        self.readings.extend(Reading(i, d["name"], status="讀取中…") for i, d in enumerate(settings.devices, 3))
         self.empty = label("正在偵測裝置…", "muted")
         self.empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.empty.setWordWrap(True)
         root.addWidget(self.empty, 1)
-        root.addWidget(label("每 30 秒更新 · 關閉視窗後仍在系統匣執行", "muted"))
+        root.addWidget(label("每 30 秒刷新 · 關閉視窗後仍在系統匣執行", "muted"))
         footer = QHBoxLayout()
         self.startup = QCheckBox("登入時自動啟動")
         self.startup.setChecked(autostart_path().exists() if not preview else False)
         self.startup.toggled.connect(self.set_startup)
         footer.addWidget(self.startup)
         footer.addStretch()
-        self.refresh_button = QPushButton("立即更新")
+        self.refresh_button = QPushButton("立即刷新")
         self.refresh_button.setObjectName("primary")
         self.refresh_button.clicked.connect(self.refresh)
         footer.addWidget(self.refresh_button)
         root.addLayout(footer)
         self.apply_theme()
         if not preview:
-            for slot in range(3):
-                tray = QSystemTrayIcon(device_icon(slot == 0, None), self)
-                menu = QMenu(self)
-                title = menu.addAction(settings.names[slot])
-                title.setEnabled(False)
-                self.headings.append(title)
-                menu.addAction("開啟裝置總覽", self.show_dashboard)
-                menu.addAction("立即更新", self.refresh)
-                menu.addAction("重新命名", lambda checked=False, i=slot: self.rename(i))
-                menu.addSeparator()
-                menu.addAction("結束全部圖示", self.quit_app)
-                tray.setContextMenu(menu)
-                tray.activated.connect(self.tray_activated)
-                self.trays.append(tray)
+            for slot in range(len(self.cards)):
+                self.create_tray(slot)
             self.timer = QTimer(self)
             self.timer.timeout.connect(self.refresh)
             self.timer.start(30000)
             QTimer.singleShot(0, self.refresh)
             QTimer.singleShot(1500, self.check_tray)
         self.render_readings()
+
+    def ensure_cards(self, count):
+        while len(self.cards) < count:
+            card = Card(len(self.cards))
+            card.rename_requested.connect(self.rename)
+            card.delete_requested.connect(self.delete_device)
+            card.edit_profile_requested.connect(self.edit_profile)
+            self.card_layout.addWidget(card)
+            self.cards.append(card)
+
+    def delete_device(self, slot):
+        if not 3 <= slot < 3 + len(self.settings.devices):
+            return
+        index = slot - 3
+        removed = self.settings.devices.pop(index)
+        if not self.save_settings():
+            self.settings.devices.insert(index, removed)
+            return
+        # Rebuild custom slots so all menu and button callbacks use current indices.
+        for tray in self.trays[3:]:
+            tray.close()
+        del self.trays[3:]
+        del self.headings[3:]
+        for card in self.cards[3:]:
+            self.card_layout.removeWidget(card)
+            card.hide()
+            card.deleteLater()
+        del self.cards[3:]
+        if slot < len(self.readings):
+            self.readings.pop(slot)
+        for i, reading in enumerate(self.readings):
+            reading.slot = i
+        self.ensure_cards(3 + len(self.settings.devices))
+        if not self.preview:
+            for i in range(3, len(self.cards)):
+                self.create_tray(i)
+        self.render_readings()
+
+    def create_tray(self, slot):
+        name = self.settings.names[slot] if slot < 3 else self.settings.devices[slot-3]["name"]
+        tray = DeviceTray(self, slot, name)
+        self.headings.append(tray)
+        self.trays.append(tray)
+
+    def add_device(self):
+        if self.worker and self.worker.isRunning():
+            QMessageBox.information(self, "新增裝置", "正在刷新，請稍後再新增裝置。")
+            return
+        candidates = []
+        dialog = QDialog(self)
+        dialog.setWindowTitle("新增裝置")
+        dialog.resize(650, 420)
+        layout = QVBoxLayout(dialog)
+        hint = label("搜尋系統電量、藍牙與 USB／2.4 GHz HID 裝置。\n可加入尚未提供電量的設備；讀不到電量時會顯示狀態。原有三款型號會自動偵測。")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+        listing = QListWidget()
+        layout.addWidget(listing)
+        status = label("正在搜尋裝置…", "muted")
+        status.setWordWrap(True)
+        layout.addWidget(status)
+        rescan = QPushButton("重新掃描")
+        layout.addWidget(rescan)
+        usb_button = QPushButton("偵測 USB 拔插…")
+        def monitor_usb():
+            monitor = UsbMonitor(dialog)
+            if monitor.exec() == QDialog.DialogCode.Accepted:
+                dialog.reject()
+                self.add_selected_device(monitor.selected)
+        usb_button.clicked.connect(monitor_usb)
+        layout.addWidget(usb_button)
+        code_button = QPushButton("輸入協定代碼…")
+        def enter_from_add():
+            dialog.reject()
+            self.enter_code()
+        code_button.clicked.connect(enter_from_add)
+        layout.addWidget(code_button)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        add = buttons.button(QDialogButtonBox.StandardButton.Ok)
+        add.setText("新增")
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
+        add.setEnabled(False)
+        listing.currentRowChanged.connect(lambda row: add.setEnabled(row >= 0))
+
+        def scanned(devices, errors):
+            existing = {d["id"] for d in self.settings.devices}
+            identities = {d.get("identity") for d in self.settings.devices if d.get("identity")}
+            candidates.clear()
+            for device in devices:
+                identity = device.get("identity")
+                if device["id"] in existing or (identity and identity in identities):
+                    continue
+                candidates.append(device)
+                if identity:
+                    identities.add(identity)
+            listing.clear()
+            for item in candidates:
+                state = (f'{item["percent"]}%' if item.get("percent") is not None else
+                         "未連線" if item.get("present") is False else "尚未提供電量")
+                listing.addItem(f'{item["name"]} · {item.get("source", "系統電量")} · {state}'
+                                + (f' · {item["detail"]}' if item.get("detail") else ""))
+            if candidates:
+                listing.setCurrentRow(0)
+            status.setText(f"找到 {len(candidates)} 個可加入項目。" +
+                           (" 部分來源無法讀取："+"；".join(errors) if errors else "") +
+                           (" 請先連接或配對設備，再按重新掃描。" if not candidates else ""))
+            rescan.setEnabled(True)
+
+        def scan():
+            rescan.setEnabled(False)
+            add.setEnabled(False)
+            status.setText("正在搜尋裝置…")
+            scanner = ScanWorker(self)
+            self.scanners.append(scanner)
+            scanner.completed.connect(scanned)
+            scanner.finished.connect(lambda: self.scanners.remove(scanner))
+            scanner.finished.connect(scanner.deleteLater)
+            scanner.start()
+
+        rescan.clicked.connect(scan)
+        scan()
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        if dialog.exec() != QDialog.DialogCode.Accepted or listing.currentRow() < 0:
+            return
+        self.add_selected_device(candidates[listing.currentRow()])
+
+    def add_selected_device(self, selected):
+        if any(d["id"] == selected["id"] for d in self.settings.devices):
+            QMessageBox.information(self, "裝置已加入", "此設備已在監測清單中。")
+            return
+        self.settings.devices.append({k: selected[k] for k in ("id", "name", "source", "identity", "vid", "pid", "port", "manufacturer", "product", "detail") if k in selected})
+        if not self.save_settings():
+            self.settings.devices.pop()
+            return
+        self.ensure_cards(3 + len(self.settings.devices))
+        if not self.preview:
+            self.create_tray(len(self.cards)-1)
+        self.readings = self.readings[:3] + [Reading(i, d["name"], status="讀取中…", present=True)
+                                                    for i, d in enumerate(self.settings.devices, 3)]
+        self.render_readings()
+        self.refresh()
+
+    def enter_code(self):
+        self.open_profile_editor()
+
+    def edit_profile(self, slot):
+        if 3 <= slot < 3 + len(self.settings.devices):
+            self.open_profile_editor(slot - 3)
+
+    def open_profile_editor(self, index=None):
+        if self.worker and self.worker.isRunning():
+            QMessageBox.information(self, "協定代碼", "正在刷新，請稍後再輸入。")
+            return
+        original = self.settings.devices[index] if index is not None else None
+        dialog = ProfileDialog(self, original)
+        while dialog.exec():
+            entry = dialog.entry
+            if original:
+                for field in ("port", "manufacturer", "product", "detail"):
+                    if field in original:
+                        entry[field] = original[field]
+            if any(d["id"] == entry["id"] and i != index for i, d in enumerate(self.settings.devices)):
+                QMessageBox.warning(dialog, "協定已加入", "另一個項目已使用此設備協定，請修改代碼或編輯該項目。")
+                continue
+            if index is None:
+                self.settings.devices.append(entry)
+            else:
+                self.settings.devices[index] = entry
+            if not self.save_settings():
+                if index is None:
+                    self.settings.devices.pop()
+                else:
+                    self.settings.devices[index] = original
+                return
+            self.ensure_cards(3 + len(self.settings.devices))
+            if index is None:
+                if not self.preview:
+                    self.create_tray(len(self.cards)-1)
+                self.readings.append(Reading(len(self.cards)-1, entry["name"], status="等待刷新…", present=True))
+            else:
+                self.readings[index+3] = Reading(index+3, entry["name"], status="等待刷新…", present=True)
+            self.render_readings()
+            QTimer.singleShot(0, self.refresh)
+            return
 
     def apply_theme(self):
         dark = self.settings.dark
@@ -224,11 +442,17 @@ class Dashboard(QWidget):
         self.save_settings()
         self.apply_theme()
 
+    def set_name(self, slot, name):
+        if slot < 3:
+            self.settings.names[slot] = name
+        else:
+            self.settings.devices[slot-3]["name"] = name
+
     def rename(self, slot):
         dialog = QInputDialog(self)
         dialog.setWindowTitle("重新命名裝置")
         dialog.setLabelText("裝置名稱（最多 32 個字元）")
-        dialog.setTextValue(self.settings.names[slot])
+        dialog.setTextValue((self.settings.names[slot] if slot < 3 else self.settings.devices[slot-3]["name"]))
         dialog.setOkButtonText("儲存")
         dialog.setCancelButtonText("取消")
         field = dialog.findChild(QLineEdit)
@@ -239,20 +463,20 @@ class Dashboard(QWidget):
             if not name or len(name) > 32:
                 QMessageBox.warning(self, "重新命名", "名稱需為 1 至 32 個字元。")
                 return
-            previous = self.settings.names[slot]
-            self.settings.names[slot] = name
+            previous = (self.settings.names[slot] if slot < 3 else self.settings.devices[slot-3]["name"])
+            self.set_name(slot, name)
             if not self.save_settings():
-                self.settings.names[slot] = previous
+                self.set_name(slot, previous)
             self.render_readings()
 
     def render_readings(self):
-        any_present = any(r.present for r in self.readings)
+        any_present = any(r.present for r in self.readings) or bool(self.settings.devices)
         self.empty.setVisible(not any_present)
         self.empty.setText("尚未偵測到支援的裝置\n插入鍵盤、滑鼠或接收器後，將自動顯示。" if self.has_polled else "正在偵測裝置…")
         for i, reading in enumerate(self.readings):
-            reading.name = self.settings.names[i]
+            reading.name = self.settings.names[i] if i < 3 else self.settings.devices[i-3]["name"]
             self.cards[i].update_reading(reading)
-            self.cards[i].setVisible(reading.present)
+            self.cards[i].setVisible(reading.present or i >= 3)
             if self.trays:
                 self.trays[i].setIcon(device_icon(i == 0, reading.percent))
                 detail = f"{reading.percent}% · {reading.connection}" if reading.percent is not None else reading.status
@@ -261,20 +485,31 @@ class Dashboard(QWidget):
                 self.trays[i].setVisible(reading.present)
 
     def refresh(self):
-        if self.preview or (self.worker and self.worker.isRunning()):
+        if self.preview or QApplication.activeModalWidget() or (self.worker and self.worker.isRunning()):
             return
         self.refresh_button.setEnabled(False)
-        self.refresh_button.setText("更新中…")
-        self.worker = Worker(self.settings.names)
-        self.worker.completed.connect(self.updated)
+        self.refresh_button.setText("刷新中…")
+        self.add_button.setEnabled(False)
+        self.code_button.setEnabled(False)
+        self.worker = Worker(self.settings.names, self.settings.devices)
+        device_ids = tuple(d["id"] for d in self.settings.devices)
+        self.worker.completed.connect(lambda readings: self.updated(readings, device_ids))
         self.worker.finished.connect(self.worker_finished)
         self.worker.start()
 
     def worker_finished(self):
+        self.add_button.setEnabled(True)
+        self.code_button.setEnabled(True)
         self.refresh_button.setEnabled(True)
-        self.refresh_button.setText("立即更新")
+        self.refresh_button.setText("立即刷新")
 
-    def updated(self, readings):
+    def updated(self, readings, device_ids=None):
+        if device_ids is not None:
+            by_id = dict(zip(device_ids, readings[3:]))
+            readings = readings[:3] + [by_id.get(d["id"], Reading(i, d["name"]))
+                                       for i, d in enumerate(self.settings.devices, 3)]
+            for i, reading in enumerate(readings):
+                reading.slot = i
         self.has_polled = True
         self.readings = readings
         self.render_readings()
@@ -328,6 +563,8 @@ class Dashboard(QWidget):
         QApplication.instance().quit()
 
     def stop_worker(self):
+        for scanner in self.scanners.copy():
+            scanner.wait()
         if self.worker:
             self.worker.wait(8000)
 

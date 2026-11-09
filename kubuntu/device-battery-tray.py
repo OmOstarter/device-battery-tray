@@ -21,7 +21,9 @@ def main():
         if args.diagnose:
             from device_battery.protocol import poll
             from device_battery.settings import Settings
-            readings = poll(Settings().names)
+            settings = Settings()
+            from device_battery.system_devices import read_devices
+            readings = poll(settings.names) + read_devices(settings.devices)
             print(json.dumps([r.to_dict() for r in readings], ensure_ascii=False, indent=2))
             return 0 if all(r.percent is not None for r in readings) else 2
         from device_battery.gui import run

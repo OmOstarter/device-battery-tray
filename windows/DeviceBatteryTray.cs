@@ -43,14 +43,16 @@ internal sealed class Reading {
  public Reading(string name){Name=name;Status="未連線";Raw="";Time=DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");}
 }
 internal sealed class UserPreferences {
- public bool Dark=true;public string[] Names;
+ public bool Dark=true;public string[] Names;public List<AddedDevice> Added=new List<AddedDevice>();
  internal static UserPreferences Current=new UserPreferences();
  static string FilePath {get{return Path.Combine(Application.StartupPath,"preferences.json");}}
  internal static void Load(){
   try{if(File.Exists(FilePath))Current=new JavaScriptSerializer().Deserialize<UserPreferences>(File.ReadAllText(FilePath))??new UserPreferences();}catch{}
+  if(Current.Added==null)Current.Added=new List<AddedDevice>();
+  HashSet<string> seen=new HashSet<string>();Current.Added.RemoveAll(d=>{try{if(d==null||string.IsNullOrWhiteSpace(d.Id)||string.IsNullOrWhiteSpace(d.Name)||d.Name.Length>32||!seen.Add(d.Id))return true;if(d.Profile!=null){d.Profile=DeviceProfile.Parse(d.Profile.Code());if(d.Id!=d.Profile.Key())return true;}else if(!d.Id.StartsWith("usb:"))return true;return false;}catch{return true;}});
   if(Current.Names!=null && Current.Names.Length==3)for(int i=0;i<3;i++)if(!string.IsNullOrWhiteSpace(Current.Names[i])&&Current.Names[i].Length<=32)BatteryReader.Names[i]=Current.Names[i].Trim();
  }
- internal static void Save(){Current.Names=(string[])BatteryReader.Names.Clone();File.WriteAllText(FilePath,new JavaScriptSerializer().Serialize(Current));}
+ internal static void Save(){Current.Names=(string[])BatteryReader.Names.Clone();string temp=FilePath+".tmp";File.WriteAllText(temp,new JavaScriptSerializer().Serialize(Current));if(File.Exists(FilePath))File.Replace(temp,FilePath,null);else File.Move(temp,FilePath);}
 }
 internal sealed class TrayColors:ProfessionalColorTable {
  readonly bool dark;internal TrayColors(bool darkMode){dark=darkMode;UseSystemColors=false;}
@@ -67,10 +69,12 @@ internal sealed class TrayColors:ProfessionalColorTable {
 internal sealed class DeviceCard:Control {
  internal Reading Data;internal bool Dark=true;internal bool Keyboard;
  readonly Button rename=new Button{Text="重新命名",FlatStyle=FlatStyle.Flat,Size=new Size(86,28),Cursor=Cursors.Hand,TabStop=true};
- internal event Action Rename;
- internal DeviceCard(bool keyboard){Keyboard=keyboard;DoubleBuffered=true;Height=114;Margin=new Padding(0,0,0,12);rename.FlatAppearance.BorderSize=0;rename.Click+=(s,e)=>{if(Rename!=null)Rename();};Controls.Add(rename);}
- protected override void OnResize(EventArgs e){base.OnResize(e);rename.Location=new Point(Width-108,76);}
- internal void UpdateTheme(bool dark){Dark=dark;rename.BackColor=dark?Color.FromArgb(43,48,60):Color.FromArgb(232,237,244);rename.ForeColor=dark?Color.FromArgb(194,204,221):Color.FromArgb(63,77,101);Invalidate();}
+ internal event Action Rename,EditProtocol,Delete;
+ readonly Button edit=new Button{Text="編輯協定代碼",FlatStyle=FlatStyle.Flat,Size=new Size(118,28),Visible=false},delete=new Button{Text="刪除",FlatStyle=FlatStyle.Flat,Size=new Size(56,28),Visible=false};
+ internal void SetCustom(bool custom){edit.Visible=delete.Visible=custom;}
+ internal DeviceCard(bool keyboard){Keyboard=keyboard;DoubleBuffered=true;Height=114;Margin=new Padding(0,0,0,12);rename.FlatAppearance.BorderSize=0;rename.Click+=(s,e)=>{if(Rename!=null)Rename();};Controls.Add(rename);edit.Click+=(s,e)=>{if(EditProtocol!=null)EditProtocol();};delete.Click+=(s,e)=>{if(Delete!=null)Delete();};Controls.Add(edit);Controls.Add(delete);}
+ protected override void OnResize(EventArgs e){base.OnResize(e);rename.Location=new Point(Width-108,76);edit.Location=new Point(Width-234,76);delete.Location=new Point(Width-298,76);}
+ internal void UpdateTheme(bool dark){Dark=dark;rename.BackColor=dark?Color.FromArgb(43,48,60):Color.FromArgb(232,237,244);rename.ForeColor=dark?Color.FromArgb(194,204,221):Color.FromArgb(63,77,101);edit.BackColor=delete.BackColor=rename.BackColor;edit.ForeColor=delete.ForeColor=rename.ForeColor;Invalidate();}
  protected override void OnPaint(PaintEventArgs e){
   base.OnPaint(e);Graphics g=e.Graphics;g.SmoothingMode=SmoothingMode.AntiAlias;
   Color surface=Dark?Color.FromArgb(28,33,44):Color.White;Color fg=Dark?Color.FromArgb(235,240,249):Color.FromArgb(30,40,60);Color muted=Dark?Color.FromArgb(146,159,181):Color.FromArgb(102,118,139);
@@ -82,7 +86,7 @@ internal sealed class DeviceCard:Control {
    TextRenderer.DrawText(g,Data==null?"讀取中…":Data.Name,name,new Rectangle(82,18,Width-230,26),fg,TextFormatFlags.EndEllipsis|TextFormatFlags.NoPadding);
    TextRenderer.DrawText(g,Data==null?"正在取得裝置狀態":percent.HasValue?Data.Connection:Data.Status,small,new Rectangle(83,47,Width-230,22),muted,TextFormatFlags.EndEllipsis|TextFormatFlags.NoPadding);
    TextRenderer.DrawText(g,percent.HasValue?percent+"%":"—",number,new Rectangle(Width-142,13,120,45),percent.HasValue?accent:muted,TextFormatFlags.Right|TextFormatFlags.NoPadding);
-   TextRenderer.DrawText(g,Data==null?"等待更新":"更新於 "+Data.Time.Substring(11),small,new Rectangle(22,81,190,20),muted,TextFormatFlags.NoPadding);
+   TextRenderer.DrawText(g,Data==null?"等待刷新":"刷新於 "+Data.Time.Substring(11),small,new Rectangle(22,81,190,20),muted,TextFormatFlags.NoPadding);
   }
   Rectangle track=new Rectangle(83,75,Math.Max(20,Width-245),5);
   using(SolidBrush b=new SolidBrush(Dark?Color.FromArgb(49,57,72):Color.FromArgb(228,234,242)))g.FillRectangle(b,track);
@@ -92,50 +96,38 @@ internal sealed class DeviceCard:Control {
 }
 internal sealed class BatteryWindow:Form {
  [DllImport("dwmapi.dll")]static extern int DwmSetWindowAttribute(IntPtr hwnd,int attr,ref int value,int size);
- readonly DeviceCard[] cards=new DeviceCard[3];readonly Button theme=new Button(),refresh=new Button();
- readonly Label heading=new Label(),subtitle=new Label(),footer=new Label();readonly CheckBox startup=new CheckBox();
- readonly Action refreshAction;readonly Action<int,string> renameAction;readonly Action<bool> startupAction;bool dark;
- internal BatteryWindow(Action update,Action<int,string> rename,bool starts,Action<bool> changeStartup){
-  refreshAction=update;renameAction=rename;startupAction=changeStartup;dark=UserPreferences.Current.Dark;
-  Text="裝置電量";ClientSize=new Size(690,570);MinimumSize=new Size(650,600);StartPosition=FormStartPosition.CenterScreen;Font=new Font("Microsoft JhengHei UI",9);AutoScaleMode=AutoScaleMode.Dpi;DoubleBuffered=true;
-  heading.Text="裝置電量";heading.Font=new Font("Microsoft JhengHei UI",24,FontStyle.Bold);heading.SetBounds(28,24,340,48);
-  subtitle.Text="鍵盤與滑鼠的電量，一眼掌握。";subtitle.SetBounds(31,80,410,24);
-  theme.SetBounds(532,37,128,34);theme.Click+=(s,e)=>{dark=!dark;UserPreferences.Current.Dark=dark;try{UserPreferences.Save();}catch(Exception ex){MessageBox.Show(this,ex.Message,"無法儲存設定");}ApplyTheme();};
-  Controls.AddRange(new Control[]{heading,subtitle,theme});
-  for(int i=0;i<3;i++){int slot=i;cards[i]=new DeviceCard(i==0){Location=new Point(28,122+i*126),Width=632,Anchor=AnchorStyles.Top|AnchorStyles.Left|AnchorStyles.Right,Data=new Reading(BatteryReader.Names[i]){Status="讀取中…"}};cards[i].Rename+=()=>EditName(slot);Controls.Add(cards[i]);}
-  startup.Text="登入 Windows 時啟動";startup.AutoSize=true;startup.Checked=starts;startup.SetBounds(31,520,240,26);startup.CheckedChanged+=(s,e)=>startupAction(startup.Checked);
-  refresh.Text="立即更新";refresh.SetBounds(544,513,116,36);refresh.Anchor=AnchorStyles.Bottom|AnchorStyles.Right;refresh.Click+=(s,e)=>refreshAction();
-  footer.Text="每 30 秒更新 · 關閉視窗後仍在系統匣執行";footer.SetBounds(31,489,500,22);
-  Controls.AddRange(new Control[]{startup,refresh,footer});ApplyTheme();
+ readonly Dictionary<string,DeviceCard> cards=new Dictionary<string,DeviceCard>();
+ readonly FlowLayoutPanel cardPanel=new FlowLayoutPanel{Dock=DockStyle.Fill,FlowDirection=FlowDirection.TopDown,WrapContents=false,AutoScroll=true,Padding=new Padding(0,10,0,0)};
+ readonly Button theme=new Button{AutoSize=true},refresh=new Button{Text="立即刷新",AutoSize=true},add=new Button{Text="新增裝置／USB 拔插",AutoSize=true},code=new Button{Text="輸入協定代碼",AutoSize=true};
+ readonly Label subtitle=new Label{AutoSize=true};readonly CheckBox startup=new CheckBox{Text="登入 Windows 時啟動",AutoSize=true};
+ readonly Action refreshAction;readonly Action<int,string> renameAction;readonly DeviceManager manager;bool dark;
+ internal BatteryWindow(Action update,Action<int,string> rename,bool starts,Action<bool> changeStartup,DeviceManager devices=null){
+  refreshAction=update;renameAction=rename;manager=devices;dark=UserPreferences.Current.Dark;
+  Text="裝置電量";ClientSize=new Size(800,650);MinimumSize=new Size(730,560);StartPosition=FormStartPosition.CenterScreen;Font=new Font("Microsoft JhengHei UI",9);AutoScaleMode=AutoScaleMode.Dpi;DoubleBuffered=true;
+  TableLayoutPanel root=new TableLayoutPanel{Dock=DockStyle.Fill,Padding=new Padding(24),ColumnCount=1,RowCount=5};root.RowStyles.Add(new RowStyle(SizeType.AutoSize));root.RowStyles.Add(new RowStyle(SizeType.AutoSize));root.RowStyles.Add(new RowStyle(SizeType.Percent,100));root.RowStyles.Add(new RowStyle(SizeType.AutoSize));root.RowStyles.Add(new RowStyle(SizeType.AutoSize));Controls.Add(root);
+  FlowLayoutPanel header=new FlowLayoutPanel{AutoSize=true,Dock=DockStyle.Fill};header.Controls.Add(new Label{Text="裝置電量",AutoSize=true,Font=new Font("Microsoft JhengHei UI",24,FontStyle.Bold),Margin=new Padding(0,0,24,4)});header.Controls.AddRange(new Control[]{theme,add,code});root.Controls.Add(header,0,0);
+  theme.Click+=(s,e)=>{dark=!dark;UserPreferences.Current.Dark=dark;try{UserPreferences.Save();}catch(Exception ex){MessageBox.Show(this,ex.Message,"無法儲存設定");}ApplyTheme();};
+  add.Enabled=code.Enabled=manager!=null;add.Click+=(s,e)=>manager.Add(this);code.Click+=(s,e)=>manager.EnterCode(this);
+  subtitle.Text="鍵盤與滑鼠的電量，一眼掌握。";root.Controls.Add(subtitle,0,1);root.Controls.Add(cardPanel,0,2);
+  root.Controls.Add(new Label{Text="每 30 秒刷新 · 關閉視窗後仍在系統匣執行",AutoSize=true},0,3);
+  FlowLayoutPanel footer=new FlowLayoutPanel{AutoSize=true,Dock=DockStyle.Fill};startup.Checked=starts;startup.CheckedChanged+=(s,e)=>changeStartup(startup.Checked);footer.Controls.Add(startup);footer.Controls.Add(refresh);root.Controls.Add(footer,0,4);refresh.Click+=(s,e)=>refreshAction();
+  cardPanel.SizeChanged+=(s,e)=>{foreach(DeviceCard card in cards.Values)card.Width=Math.Max(600,cardPanel.ClientSize.Width-24);};ApplyTheme();
  }
- protected override void OnHandleCreated(EventArgs e){base.OnHandleCreated(e);ApplyTitleTheme();}
- void ApplyTitleTheme(){if(IsHandleCreated){int value=dark?1:0;try{DwmSetWindowAttribute(Handle,20,ref value,4);}catch{}}}
- void ApplyTheme(){
-  BackColor=dark?Color.FromArgb(17,21,30):Color.FromArgb(244,247,251);ForeColor=dark?Color.FromArgb(235,240,249):Color.FromArgb(30,40,60);
-  heading.ForeColor=ForeColor;startup.ForeColor=ForeColor;subtitle.ForeColor=footer.ForeColor=dark?Color.FromArgb(146,159,181):Color.FromArgb(102,118,139);
-  foreach(Button button in new[]{theme,refresh}){button.FlatStyle=FlatStyle.Flat;button.FlatAppearance.BorderSize=0;button.Cursor=Cursors.Hand;button.BackColor=dark?Color.FromArgb(44,53,72):Color.FromArgb(225,233,246);button.ForeColor=ForeColor;}
-  refresh.BackColor=Color.FromArgb(76,115,245);refresh.ForeColor=Color.White;theme.Text=dark?"切換淺色模式":"切換深色模式";
-  foreach(DeviceCard card in cards)if(card!=null)card.UpdateTheme(dark);ApplyTitleTheme();Invalidate();
+ protected override void OnHandleCreated(EventArgs e){base.OnHandleCreated(e);ApplyTheme();}
+ void ApplyTheme(){BackColor=dark?Color.FromArgb(17,21,30):Color.FromArgb(244,247,251);ForeColor=dark?Color.FromArgb(235,240,249):Color.FromArgb(30,40,60);
+  foreach(Button button in new[]{theme,refresh,add,code}){button.FlatStyle=FlatStyle.Flat;button.FlatAppearance.BorderSize=0;button.BackColor=dark?Color.FromArgb(44,53,72):Color.FromArgb(225,233,246);button.ForeColor=ForeColor;}
+  refresh.BackColor=Color.FromArgb(76,115,245);refresh.ForeColor=Color.White;theme.Text=dark?"切換淺色模式":"切換深色模式";foreach(DeviceCard card in cards.Values)card.UpdateTheme(dark);
+  if(IsHandleCreated){int value=dark?1:0;try{DwmSetWindowAttribute(Handle,20,ref value,4);}catch{}}
  }
  internal void UpdateReadings(Reading[] readings,bool busy){
-  int visible=0;
-  for(int i=0;i<cards.Length;i++){
-   cards[i].Visible=readings!=null && readings[i].Present;
-   if(readings!=null){cards[i].Data=readings[i];if(readings[i].Present)cards[i].Location=new Point(28,122+visible++*126);cards[i].Invalidate();}
-  }
-  subtitle.Text=readings==null?"正在偵測裝置…":visible==0?"尚未偵測到支援裝置，插入鍵盤、滑鼠或接收器後將自動顯示。":"鍵盤與滑鼠的電量，一眼掌握。";
-  refresh.Enabled=!busy;refresh.Text=busy?"更新中…":"立即更新";
+  HashSet<string> active=new HashSet<string>();int visible=0;cardPanel.SuspendLayout();
+  for(int i=0;i<3;i++){int slot=i;string key="builtin:"+i;active.Add(key);DeviceCard card=Card(key,i==0);if(card.Tag==null){card.Tag=key;card.Rename+=()=>EditName(slot);}card.Data=readings==null?new Reading(BatteryReader.Names[i]){Status="讀取中…"}:readings[i];card.Visible=readings!=null&&readings[i].Present;if(card.Visible)visible++;card.Invalidate();}
+  if(manager!=null)foreach(AddedDevice device in manager.Devices){string id=device.Id;active.Add(id);DeviceCard card=Card(id,device.Profile!=null&&device.Profile.protocol=="lofree");if(card.Tag==null){card.Tag=id;card.SetCustom(true);card.Rename+=()=>manager.Rename(this,id);card.EditProtocol+=()=>manager.Edit(this,id);card.Delete+=()=>manager.Delete(this,id);}Reading reading;card.Data=manager.Latest.TryGetValue(id,out reading)?reading:new Reading(device.Name){Status="等待刷新…"};card.Visible=true;card.Invalidate();visible++;}
+  foreach(string key in new List<string>(cards.Keys))if(!active.Contains(key)){DeviceCard card=cards[key];cardPanel.Controls.Remove(card);card.Dispose();cards.Remove(key);}cardPanel.ResumeLayout();
+  subtitle.Text=readings==null?"正在偵測裝置…":visible==0?"尚未偵測到支援裝置，可使用新增裝置或 USB 拔插排查。":"鍵盤與滑鼠的電量，一眼掌握。";refresh.Enabled=!busy;refresh.Text=busy?"刷新中…":"立即刷新";
  }
- void EditName(int slot){
-  using(Form dialog=new Form{Text="重新命名裝置",ClientSize=new Size(420,170),FormBorderStyle=FormBorderStyle.FixedDialog,StartPosition=FormStartPosition.CenterParent,MaximizeBox=false,MinimizeBox=false,BackColor=BackColor,ForeColor=ForeColor,Font=Font}){
-   Label label=new Label{Text="裝置名稱（最多 32 個字元）",Location=new Point(24,20),AutoSize=true};
-   TextBox field=new TextBox{Text=BatteryReader.Names[slot],MaxLength=32,Location=new Point(24,52),Width=372,BackColor=dark?Color.FromArgb(35,42,56):Color.White,ForeColor=ForeColor,BorderStyle=BorderStyle.FixedSingle};
-   Button save=new Button{Text="儲存",DialogResult=DialogResult.OK,Location=new Point(306,112),Size=new Size(90,34),FlatStyle=FlatStyle.Flat,BackColor=Color.FromArgb(76,115,245),ForeColor=Color.White};
-   Button cancel=new Button{Text="取消",DialogResult=DialogResult.Cancel,Location=new Point(204,112),Size=new Size(90,34),FlatStyle=FlatStyle.Flat,ForeColor=ForeColor};
-   dialog.Controls.AddRange(new Control[]{label,field,save,cancel});dialog.AcceptButton=save;dialog.CancelButton=cancel;
-   if(dialog.ShowDialog(this)==DialogResult.OK){if(string.IsNullOrWhiteSpace(field.Text)){MessageBox.Show(this,"名稱不能留空。","重新命名");return;}renameAction(slot,field.Text.Trim());}
-  }
- }
+ DeviceCard Card(string id,bool keyboard){DeviceCard card;if(!cards.TryGetValue(id,out card)){card=new DeviceCard(keyboard){Width=Math.Max(600,cardPanel.ClientSize.Width-24)};cards[id]=card;cardPanel.Controls.Add(card);card.UpdateTheme(dark);}card.Keyboard=keyboard;return card;}
+ void EditName(int slot){using(Form dialog=new Form{Text="重新命名裝置",ClientSize=new Size(420,150),StartPosition=FormStartPosition.CenterParent,Font=Font}){TextBox field=new TextBox{Text=BatteryReader.Names[slot],MaxLength=32,Location=new Point(24,30),Width=372};Button save=new Button{Text="儲存",DialogResult=DialogResult.OK,Location=new Point(306,90)};dialog.Controls.AddRange(new Control[]{field,save});dialog.AcceptButton=save;if(dialog.ShowDialog(this)==DialogResult.OK){if(string.IsNullOrWhiteSpace(field.Text)){MessageBox.Show(this,"名稱不能留空。");return;}renameAction(slot,field.Text.Trim());}}}
 }
 internal sealed class BatteryReader {
  internal static readonly string[] Names={"LOFREE 小順青春版(100鍵)","HECATE G3M PRO","HECATE G3M PRO 升級版"};
@@ -230,15 +222,16 @@ internal sealed class TrayApp:ApplicationContext {
  BatteryWindow window;
  readonly NotifyIcon[] icons=new NotifyIcon[3];readonly System.Windows.Forms.Timer timer;
  readonly Control dispatch=new Control();bool busy,exiting;Reading[] latest;
- readonly string dataDir=Application.StartupPath;
+ readonly string dataDir=Application.StartupPath;readonly DeviceManager custom;
  internal TrayApp(EventWaitHandle signal){
   showSignal=signal;
   IntPtr dispatchHandle=dispatch.Handle;
+  custom=new DeviceManager(dispatch,ShowReadings);custom.Changed+=()=>{if(window!=null&&!window.IsDisposed)window.UpdateReadings(latest,busy);};
   for(int i=0;i<3;i++){
    int slot=i;
    ContextMenuStrip menu=new ContextMenuStrip();
    menu.Items.Add(BatteryReader.Names[i]).Enabled=false;
-   menu.Items.Add("立即更新",null,(s,e)=>Refresh());
+   menu.Items.Add("立即刷新",null,(s,e)=>Refresh());
    menu.Items.Add("查看全部電量",null,(s,e)=>ShowReadings());
    ToolStripMenuItem auto=new ToolStripMenuItem("登入 Windows 時啟動");
    auto.Checked=IsStartup();auto.Click+=(s,e)=>{SetStartup(!IsStartup());};
@@ -272,11 +265,11 @@ internal sealed class TrayApp:ApplicationContext {
   }
  }
  void Refresh(){
-  if(busy||exiting)return;busy=true;if(window!=null&&!window.IsDisposed)window.UpdateReadings(latest,true);
+  if(busy||exiting)return;custom.Refresh();busy=true;if(window!=null&&!window.IsDisposed)window.UpdateReadings(latest,true);
   Task.Run(()=>{
    Reading[] readings;
    try{readings=new BatteryReader().Poll();}
-   catch(Exception ex){readings=Array.ConvertAll(BatteryReader.Names,n=>new Reading(n){Status="讀取失敗："+ex.Message});}
+   catch(Exception ex){try{readings=WindowsHid.ReadBuiltins();}catch(Exception nativeError){readings=Array.ConvertAll(BatteryReader.Names,n=>new Reading(n){Status="讀取失敗："+ex.Message+" / "+nativeError.Message});}}
    try{Directory.CreateDirectory(dataDir);File.WriteAllText(Path.Combine(dataDir,"status.json"),new JavaScriptSerializer().Serialize(readings));}catch{}
    if(exiting)return;
    try{dispatch.BeginInvoke((Action)(()=>{
@@ -292,7 +285,7 @@ internal sealed class TrayApp:ApplicationContext {
   });
  }
  void ShowReadings(){
-  if(window==null||window.IsDisposed)window=new BatteryWindow(Refresh,Rename,IsStartup(),SetStartup);
+  if(window==null||window.IsDisposed)window=new BatteryWindow(Refresh,Rename,IsStartup(),SetStartup,custom);
   window.UpdateReadings(latest,busy);window.Show();if(window.WindowState==FormWindowState.Minimized)window.WindowState=FormWindowState.Normal;window.Activate();
  }
  void Rename(int slot,string name){
@@ -307,18 +300,21 @@ internal sealed class TrayApp:ApplicationContext {
   try{using(RegistryKey k=Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run")){if(enable)k.SetValue("DeviceBatteryTray","\""+Application.ExecutablePath+"\"");else k.DeleteValue("DeviceBatteryTray",false);}}
   catch(Exception ex){MessageBox.Show(ex.Message,"無法變更自動啟動");}
  }
- protected override void ExitThreadCore(){exiting=true;signalTimer.Stop();signalTimer.Dispose();if(window!=null)window.Dispose();timer.Stop();timer.Dispose();foreach(NotifyIcon n in icons){n.Visible=false;Icon ic=n.Icon;n.Dispose();ic.Dispose();}dispatch.Dispose();base.ExitThreadCore();}
+ protected override void ExitThreadCore(){exiting=true;custom.Dispose();signalTimer.Stop();signalTimer.Dispose();if(window!=null)window.Dispose();timer.Stop();timer.Dispose();foreach(NotifyIcon n in icons){n.Visible=false;Icon ic=n.Icon;n.Dispose();ic.Dispose();}dispatch.Dispose();base.ExitThreadCore();}
 }
 internal static class Program {
  [STAThread] static int Main(string[] args){
   UserPreferences.Load();
+  if(args.Length>0&&args[0]=="--test-profiles"){
+   try{ProfileTests.Run();return 0;}catch(Exception ex){Console.Error.WriteLine(ex);File.WriteAllText(Path.Combine(Path.GetTempPath(),"device-battery-profile-tests.log"),ex.ToString());return 10;}
+  }
   if(args.Length>0 && args[0]=="--preview-ui"){
    Application.EnableVisualStyles();Application.SetCompatibleTextRenderingDefault(false);
    Reading[] sample=Array.ConvertAll(BatteryReader.Names,n=>new Reading(n){Percent=85,Connection="2.4 GHz 接收器",Status="已連線",Present=true});sample[1].Percent=48;sample[2].Percent=null;sample[2].Status="裝置離線";
    using(BatteryWindow form=new BatteryWindow(()=>{},(i,n)=>{},false,b=>{})){form.UpdateReadings(sample,false);form.Show();Application.DoEvents();using(Bitmap bitmap=new Bitmap(form.Width,form.Height)){form.DrawToBitmap(bitmap,new Rectangle(Point.Empty,form.Size));bitmap.Save(args[1],System.Drawing.Imaging.ImageFormat.Png);}}return 0;
   }
   if(args.Length>0 && args[0]=="--diagnose"){
-   try{File.WriteAllText(args.Length>1?args[1]:"status.json",new JavaScriptSerializer().Serialize(new BatteryReader().Poll()));return 0;}
+   try{File.WriteAllText(args.Length>1?args[1]:"status.json",new JavaScriptSerializer().Serialize(WindowsHid.ReadBuiltins()));return 0;}
    catch(Exception ex){File.WriteAllText(args.Length>1?args[1]:"status.json",ex.ToString());return 1;}
   }
   if(args.Length>0 && args[0]=="--self-test"){

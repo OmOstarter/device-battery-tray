@@ -1,19 +1,22 @@
-# v0.1.0
+# v0.1.1
 
-LOFREE / HECATE 裝置電量工具的首次正式發布。Kubuntu 版已由作者確認可正常使用。
+Kubuntu 與 Windows 加入裝置管理、協定代碼編輯與 USB 拔插排查。
 
-- Linux 優先使用 hidraw 後端，修正原本 libusb 後端無法找到裝置的問題。
-- 更新時沿用既有虛擬環境，修正唯讀 activate.csh 導致安裝失敗的問題。
-- 診斷輸出加入實際 HID 後端、裝置路徑、控制介面與存取錯誤。
-- 三個裝置各自的系統匣圖示、改名、主題、登入啟動與 30 秒更新。
-- 15 項 Python／Qt 自動測試通過。
+- 介面「更新」改稱「刷新」，維持每 30 秒與手動刷新。
+- 手動新增項目可重新命名、刪除，或在原卡片繼續編輯協定代碼；設定會保存。
+- 協定頁提供簡易表單、JSON／DBT1 代碼及可複製的本地 agent 提示詞，協助分析本地原廠軟體／驅動。程式不自行反編譯或執行 agent。
+- USB 拔插辨認會標記插入／拔除、名稱和 VID／PID，可複製資訊或新增監測；適合排查不同鍵數版本及接收器。
+- Kubuntu 擴充電池目錄、UPower、BlueZ 與 HID 搜尋；KDE 隱藏圖示清單使用設備名稱。
+- Windows 提供自訂設備系統匣圖示、內建 HID 協定讀取及背景 WMI USB 偵測；缺少原廠 DLL 時，原有三款型號會改用內建 HID 後端。
+- Python／Qt 測試與 Windows 封包、設定、編輯視窗及預覽檢查納入發布流程。
 
-## 下載與安裝
+## 下載
 
-- `device-battery-tray_0.1.0_all.deb`：Kubuntu 26.04，使用系統 Python／Qt 套件。下載後執行 `sudo apt install ./device-battery-tray_0.1.0_all.deb`，安裝後重新插拔接收器，從選單開啟「裝置電量」。此套件不內含 Python／Qt，apt 需要可用的 universe 套件來源；不支援 Kubuntu 24.04 的系統依賴。
-- `device-battery-tray-kubuntu-0.1.0.tar.gz`：Python 原始碼與安裝腳本，可使用獨立 venv 安裝。
-- `device-battery-tray-windows-0.1.0.zip`：Windows x64 程式與說明，仍需本機原廠 DLL。
+- `device-battery-tray_0.1.1_all.deb`：Kubuntu 26.04。執行 `sudo apt install ./device-battery-tray_0.1.1_all.deb`。
+- `device-battery-tray-kubuntu-0.1.1.tar.gz`：Kubuntu 原始碼及安裝腳本。
+- `device-battery-tray-windows-0.1.1.zip`：Windows x64 可執行程式與使用說明。
+- `SHA256SUMS`：下載檔案校驗值。
 
-從腳本安裝切換到 `.deb` 前，先結束程式並執行舊版 `kubuntu/uninstall.sh`，避免使用者層級的選單項目繼續啟動舊副本。移除腳本會保留名稱／主題設定；安裝 `.deb` 後可重新勾選登入自動啟動。
+升級前先從系統匣結束程式；原有設定會保留。腳本安裝升級可執行新版 `kubuntu/install.sh --no-udev`。從腳本切換 `.deb` 時，先用舊腳本移除使用者層的啟動項目，避免啟動舊副本。
 
-藍牙與同型號多台裝置尚未支援；Windows 原廠 DLL 不隨發布附件提供。`.deb` 的套件結構與自動建置會驗證，但首次 `.deb` 的桌面安裝仍待實機確認。
+辨認 USB 設備不等於支援其電量。代碼目前接受 lofree、hecate-original、hecate-upgraded 三種已實作協定；未知協定仍需新增後端。84 鍵版尚未確認協定相容性。同 VID／PID 多台分別綁定電量尚未支援。Windows 通用藍牙電量與新原生 HID 後端的硬體讀值仍待實機驗證；Kubuntu 新 `.deb` 桌面安裝流程也仍待實測。發布附件不包含原廠 DLL。

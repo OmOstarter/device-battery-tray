@@ -46,7 +46,7 @@ def main():
             "Section: utils\nPriority: optional\nArchitecture: all\n"
             "Maintainer: Andy Lin <j333445ss@gmail.com>\n"
             "Depends: python3 (>= 3.10), python3-hid (>= 0.14), "
-            "python3-pyside6.qtwidgets (>= 6.8), python3-pyside6.qtnetwork (>= 6.8), udev\n"
+            "python3-pyside6.qtwidgets (>= 6.8), python3-pyside6.qtnetwork (>= 6.8), systemd, udev\n"
             "Homepage: https://github.com/OmOstarter/device-battery-tray\n"
             "Description: LOFREE and HECATE keyboard and mouse battery tray monitor\n"
             " Qt tray monitor with per-device battery readings and hidraw access rules.\n"

@@ -4,6 +4,11 @@ on:
     branches: [main]
     paths: [VERSION, .github/workflows/release.yml]
   workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish a GitHub release after successful checks
+        type: boolean
+        default: true
 permissions:
   contents: write
 concurrency:
@@ -50,11 +55,26 @@ jobs:
           New-Item -ItemType Directory -Path dist
           $version = (Get-Content VERSION).Trim()
           Compress-Archive -Path windows/DeviceBatteryTray.exe,windows/使用說明.md -DestinationPath "dist/device-battery-tray-windows-$version.zip"
+      - name: Test Windows protocols and UI
+        shell: pwsh
+        run: |
+          foreach ($mode in @('--test-profiles', '--self-test')) {
+            $test = Start-Process -FilePath ./windows/DeviceBatteryTray.exe -ArgumentList $mode -Wait -PassThru
+            if ($test.ExitCode -ne 0) {
+              $log = Join-Path $env:TEMP 'device-battery-profile-tests.log'
+              if (Test-Path $log) { Get-Content $log }
+              throw "Windows test $mode failed: $($test.ExitCode)"
+            }
+          }
+          $preview = Join-Path $env:RUNNER_TEMP 'windows-preview.png'
+          $test = Start-Process -FilePath ./windows/DeviceBatteryTray.exe -ArgumentList @('--preview-ui', $preview) -Wait -PassThru
+          if ($test.ExitCode -ne 0 -or !(Test-Path $preview)) { throw 'Windows preview failed' }
       - uses: actions/upload-artifact@v4
         with:
           name: windows
           path: dist/*
   publish:
+    if: github.event_name != 'workflow_dispatch' || inputs.publish
     needs: [linux, windows]
     runs-on: ubuntu-24.04
     steps:
@@ -73,4 +93,4 @@ jobs:
             echo "Release v$version already exists; leaving its assets unchanged."
             exit 0
           fi
-          gh release create "v$version" dist/* --target "$GITHUB_SHA" --title "v$version · Kubuntu 電量讀取修正" --notes-file RELEASE_NOTES.md --latest
+          gh release create "v$version" dist/* --target "$GITHUB_SHA" --title "v$version · 裝置管理與協定代碼" --notes-file RELEASE_NOTES.md --latest
