@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Drawing;
+using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Text;
@@ -8,6 +10,14 @@ using System.Windows.Forms;
 
 internal static class ProfileTests {
  static void Check(bool value,string message){if(!value)throw new Exception(message);}
+ internal static void Preview(string directory){
+  Directory.CreateDirectory(directory);DeviceProfile profile=new DeviceProfile{name="小順青春版 84 鍵",vid="05AC",pid="024F",protocol="lofree"};
+  AddedDevice device=new AddedDevice{Id=profile.Key(),Name=profile.name,Profile=profile,DriverPath=@"C:\Program Files\Lofree\HIDUsb.dll",Notes="84 鍵，2.4 GHz 接收器"};
+  using(ProtocolEditor editor=new ProtocolEditor(device)){editor.Show();Application.DoEvents();Capture(editor,Path.Combine(directory,"protocol-form.png"));TabControl tabs=(TabControl)typeof(ProtocolEditor).GetField("tabs",BindingFlags.Instance|BindingFlags.NonPublic).GetValue(editor);tabs.SelectedIndex=2;Application.DoEvents();Capture(editor,Path.Combine(directory,"protocol-prompt.png"));editor.Close();}
+  using(UsbPicker picker=new UsbPicker(true)){picker.Show();Application.DoEvents();Capture(picker,Path.Combine(directory,"usb-monitor.png"));picker.Close();}
+  using(Form form=new Form{ClientSize=new Size(740,150),BackColor=Color.FromArgb(17,21,30)}){DeviceCard card=new DeviceCard(true){Width=700,Location=new Point(20,16),Data=new Reading(device.Name){Present=true,Status="等待刷新…"}};card.SetCustom(true);card.UpdateTheme(true);form.Controls.Add(card);form.Show();Application.DoEvents();Capture(form,Path.Combine(directory,"custom-card.png"));form.Close();}
+ }
+ static void Capture(Form form,string path){using(Bitmap image=new Bitmap(form.Width,form.Height)){form.DrawToBitmap(image,new Rectangle(Point.Empty,form.Size));image.Save(path,System.Drawing.Imaging.ImageFormat.Png);}}
  internal static void Run(){
   const string example="{\"version\":1,\"name\":\"我的鍵盤\",\"vid\":\"05AC\",\"pid\":\"024F\",\"protocol\":\"lofree\"}";
   DeviceProfile profile=DeviceProfile.Parse(example);Check(profile.vid=="05AC","hex normalization");

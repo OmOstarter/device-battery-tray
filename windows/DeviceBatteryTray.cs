@@ -268,8 +268,8 @@ internal sealed class TrayApp:ApplicationContext {
   if(busy||exiting)return;custom.Refresh();busy=true;if(window!=null&&!window.IsDisposed)window.UpdateReadings(latest,true);
   Task.Run(()=>{
    Reading[] readings;
-   try{readings=new BatteryReader().Poll();}
-   catch(Exception ex){try{readings=WindowsHid.ReadBuiltins();}catch(Exception nativeError){readings=Array.ConvertAll(BatteryReader.Names,n=>new Reading(n){Status="讀取失敗："+ex.Message+" / "+nativeError.Message});}}
+   try{lock(WindowsHid.Gate){readings=new BatteryReader().Poll();}}
+   catch(Exception ex){try{lock(WindowsHid.Gate){readings=WindowsHid.ReadBuiltins();}}catch(Exception nativeError){readings=Array.ConvertAll(BatteryReader.Names,n=>new Reading(n){Status="讀取失敗："+ex.Message+" / "+nativeError.Message});}}
    try{Directory.CreateDirectory(dataDir);File.WriteAllText(Path.Combine(dataDir,"status.json"),new JavaScriptSerializer().Serialize(readings));}catch{}
    if(exiting)return;
    try{dispatch.BeginInvoke((Action)(()=>{
@@ -305,6 +305,9 @@ internal sealed class TrayApp:ApplicationContext {
 internal static class Program {
  [STAThread] static int Main(string[] args){
   UserPreferences.Load();
+  if(args.Length>1&&args[0]=="--preview-features"){
+   Application.EnableVisualStyles();ProfileTests.Preview(args[1]);return 0;
+  }
   if(args.Length>0&&args[0]=="--test-profiles"){
    try{ProfileTests.Run();return 0;}catch(Exception ex){Console.Error.WriteLine(ex);File.WriteAllText(Path.Combine(Path.GetTempPath(),"device-battery-profile-tests.log"),ex.ToString());return 10;}
   }

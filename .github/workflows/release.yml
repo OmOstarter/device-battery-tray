@@ -69,6 +69,14 @@ jobs:
           $preview = Join-Path $env:RUNNER_TEMP 'windows-preview.png'
           $test = Start-Process -FilePath ./windows/DeviceBatteryTray.exe -ArgumentList @('--preview-ui', $preview) -Wait -PassThru
           if ($test.ExitCode -ne 0 -or !(Test-Path $preview)) { throw 'Windows preview failed' }
+          $qa = Join-Path $env:RUNNER_TEMP 'device-battery-qa'
+          $test = Start-Process -FilePath ./windows/DeviceBatteryTray.exe -ArgumentList @('--preview-features', $qa) -Wait -PassThru
+          if ($test.ExitCode -ne 0) { throw 'Windows feature previews failed' }
+          Copy-Item $preview (Join-Path $qa 'dashboard.png')
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-qa
+          path: ${{ runner.temp }}/device-battery-qa/*.png
       - uses: actions/upload-artifact@v4
         with:
           name: windows
@@ -82,6 +90,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: dist
+          pattern: "{linux,windows}"
           merge-multiple: true
       - name: Publish release
         env:

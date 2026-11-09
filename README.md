@@ -5,7 +5,7 @@ LOFREE 小順青春版(100鍵)、HECATE G3M PRO 與 HECATE G3M PRO 升級版的�
 ## 功能
 
 - 三個裝置各自使用獨立的鍵盤／滑鼠圖示。
-- 只有已插入的裝置或接收器才出現在系統匣與總覽；拔除後於下次刷新隱藏。
+- 系統匣只顯示已插入的裝置或接收器；原有型號拔除後隱藏卡片，手動新增的卡片保留狀態。
 - 電量超過 70% 為綠色；30～70% 為橘色；低於 30% 為紅色。
 - 游標懸浮顯示自訂名稱、電量與 USB／2.4 GHz 接收器連線方式。
 - 卡片式總覽，支援深色與淺色模式。
@@ -21,17 +21,17 @@ LOFREE 小順青春版(100鍵)、HECATE G3M PRO 與 HECATE G3M PRO 升級版的�
 
 接收器仍插入但無線裝置休眠、權限不足或電量讀取失敗時，保留灰色圖示並顯示狀態。裝置是否插入與電量讀值分開處理，讓後續新增支援型號時可沿用顯示邏輯。自動偵測最多等待 30 秒，也可立即手動刷新；原廠協定支援下列三個型號；Kubuntu 另可透過「新增裝置」搜尋並加入系統電量、藍牙與 HID 設備；無通用電量資訊的型號會顯示狀態。
 
-藍牙與同型號多台裝置目前尚未支援。
+Kubuntu 可讀取 BlueZ／UPower 已提供的藍牙電量；同 VID／PID 多台的協定查詢分別綁定尚未支援。
 
 ## Windows
 
-完整原始碼位於 [windows/DeviceBatteryTray.cs](windows/DeviceBatteryTray.cs)。在 PowerShell 編譯：
+Windows 原始碼位於 [windows](windows)。在 PowerShell 編譯：
 
 ```powershell
 & .\windows\build.ps1
 ```
 
-執行產生的 `windows/DeviceBatteryTray.exe`。需保留原廠安裝目錄 `C:\Program Files\HECATE` 與 `C:\Program Files\Lofree Key Mapper\Sys64`；程式不包含原廠 DLL，也不會安裝核心驅動。
+執行產生的 `windows/DeviceBatteryTray.exe`。如需沿用原廠 DLL 讀取流程，請保留原廠安裝目錄 `C:\Program Files\HECATE` 與 `C:\Program Files\Lofree Key Mapper\Sys64`；程式不包含原廠 DLL，也不會安裝核心驅動。
 
 詳細操作與通訊分析見 [Windows 使用說明](windows/使用說明.md)。
 
@@ -59,7 +59,7 @@ python3 -m venv .venv
 QT_QPA_PLATFORM=offscreen .venv/bin/python -m unittest discover -s tests -v
 ```
 
-目前 15 項 Python／Qt 測試通過，包含拔除隱藏、接收器無電量仍保留圖示、Linux 後端選擇及存取錯誤診斷。Kubuntu 電量讀取已由作者實測確認；新 `.deb` 安裝流程仍待桌面實測。
+目前 42 項 Python／Qt 測試通過，包含拔除隱藏、接收器無電量仍保留圖示、Linux 後端選擇及存取錯誤診斷。Kubuntu 電量讀取已由作者實測確認；新 `.deb` 安裝流程仍待桌面實測。
 
 ## 待處理
 

@@ -66,6 +66,7 @@ internal static class UsbInventory {
 }
 internal sealed class HidNode {internal string Path,Name;internal ushort Vid,Pid,Page,Input,Output;}
 internal static class WindowsHid {
+ internal static readonly object Gate=new object();
  [StructLayout(LayoutKind.Sequential)]struct InterfaceData{public int Size;public Guid Class;public int Flags;public IntPtr Reserved;}
  [StructLayout(LayoutKind.Sequential)]struct Attributes{public int Size;public ushort Vid,Pid,Version;}
  [StructLayout(LayoutKind.Sequential)]struct Overlap{public IntPtr Low,High;public uint Offset,OffsetHigh;public IntPtr Event;}
@@ -170,7 +171,7 @@ internal sealed class UsbPicker:Form {
  readonly ListBox list=new ListBox{Dock=DockStyle.Fill,HorizontalScrollbar=true};readonly Label status=new Label{AutoSize=true,Dock=DockStyle.Bottom};readonly Button add=new Button{Text="新增所選設備",AutoSize=true};readonly System.Windows.Forms.Timer timer=new System.Windows.Forms.Timer{Interval=1000};
  Dictionary<string,UsbDevice> snapshot;bool scanning,closed;internal AddedDevice Result;
  sealed class Entry{internal string State;internal UsbDevice Device;public override string ToString(){return State+" · "+Device;}}
- internal UsbPicker(){
+ internal UsbPicker(bool preview=false){
   Text="新增裝置／偵測 USB 拔插";Size=new Size(940,520);MinimumSize=new Size(720,420);StartPosition=FormStartPosition.CenterParent;Font=new Font("Microsoft JhengHei UI",10);
   Label hint=new Label{Text="先拔掉目標鍵盤、滑鼠或 2.4 GHz 接收器，再插回。每秒檢查並標示插入／拔除；同一接收器的複合介面會合併。\n辨認設備不代表已支援電量；可先加入監測，再編輯協定代碼。",AutoSize=true,Dock=DockStyle.Top,Padding=new Padding(10)};
   FlowLayoutPanel actions=new FlowLayoutPanel{Dock=DockStyle.Bottom,Height=46};Button reset=new Button{Text="重新掃描／清除紀錄",AutoSize=true},copy=new Button{Text="複製設備資料",AutoSize=true},code=new Button{Text="輸入協定代碼…",AutoSize=true},cancel=new Button{Text="關閉",DialogResult=DialogResult.Cancel,AutoSize=true};actions.Controls.AddRange(new Control[]{reset,copy,code,add,cancel});
@@ -178,7 +179,7 @@ internal sealed class UsbPicker:Form {
   copy.Click+=(s,e)=>{Entry entry=list.SelectedItem as Entry;if(entry!=null)Clipboard.SetText(new JavaScriptSerializer().Serialize(entry.Device));};
   code.Click+=(s,e)=>{using(ProtocolEditor editor=new ProtocolEditor(null)){if(editor.ShowDialog(this)==DialogResult.OK){Result=editor.Result;DialogResult=DialogResult.OK;}}};
   add.Click+=(s,e)=>{Entry entry=list.SelectedItem as Entry;if(entry!=null&&snapshot!=null&&snapshot.ContainsKey(entry.Device.Id)&&entry.State!="拔除"){Result=entry.Device.Added();DialogResult=DialogResult.OK;}};
-  timer.Tick+=(s,e)=>Scan();Shown+=(s,e)=>{Scan();timer.Start();};FormClosed+=(s,e)=>{closed=true;timer.Stop();timer.Dispose();};
+  timer.Tick+=(s,e)=>Scan();if(!preview)Shown+=(s,e)=>{Scan();timer.Start();};else{UsbDevice sample=new UsbDevice{Id="usb:preview",Name="小順青春版 84 鍵",Vid="05AC",Pid="024F",Instance=@"USB\VID_05AC&PID_024F\RECEIVER"};snapshot=new Dictionary<string,UsbDevice>{{sample.Id,sample}};Add("目前已連接",sample);Add("拔除",sample);Add("插入",sample);status.Text="預覽：插拔接收器後會顯示設備名稱、VID/PID 及識別路徑。";UpdateSelection();}FormClosed+=(s,e)=>{closed=true;timer.Stop();timer.Dispose();};
  }
  void Add(string state,UsbDevice device){list.Items.Insert(0,new Entry{State=state,Device=device});list.SelectedIndex=0;while(list.Items.Count>200)list.Items.RemoveAt(list.Items.Count-1);}
  void UpdateSelection(){Entry entry=list.SelectedItem as Entry;add.Enabled=!scanning&&entry!=null&&entry.State!="拔除"&&snapshot!=null&&snapshot.ContainsKey(entry.Device.Id);}
@@ -210,7 +211,7 @@ internal sealed class DeviceManager:IDisposable {
   Task.Run(()=>{Dictionary<string,Reading> result=new Dictionary<string,Reading>();List<HidNode> hid=null;Dictionary<string,UsbDevice> usb=null;string hidError=null,usbError=null;
    if(devices.Any(d=>d.Profile!=null))try{hid=WindowsHid.Enumerate();}catch(Exception ex){hidError=ex.Message;}
    if(devices.Any(d=>d.Profile==null))try{usb=UsbInventory.Scan();}catch(Exception ex){usbError=ex.Message;}
-   foreach(AddedDevice device in devices){Reading reading=new Reading(device.Name);try{if(device.Profile!=null){if(hidError!=null)throw new IOException(hidError);reading=WindowsHid.Read(device,hid);}else if(usbError!=null)throw new IOException(usbError);else{reading.Present=usb.ContainsKey(device.Id);if(reading.Present)reading.Status="已連接；請編輯協定代碼以讀取電量";}}catch(Exception ex){reading.Status="讀取失敗："+ex.Message;reading.Present=true;}result[device.Id]=reading;}
+   foreach(AddedDevice device in devices){Reading reading=new Reading(device.Name);try{if(device.Profile!=null){if(hidError!=null)throw new IOException(hidError);lock(WindowsHid.Gate){reading=WindowsHid.Read(device,hid);}}else if(usbError!=null)throw new IOException(usbError);else{reading.Present=usb.ContainsKey(device.Id);if(reading.Present)reading.Status="已連接；請編輯協定代碼以讀取電量";}}catch(Exception ex){reading.Status="讀取失敗："+ex.Message;reading.Present=true;}result[device.Id]=reading;}
    if(closed)return;try{dispatch.BeginInvoke((Action)(()=>{busy=false;if(closed)return;if(version!=revision){Refresh();return;}Latest=result;RenderIcons();OnChanged();}));}catch(InvalidOperationException){}
   });
  }
