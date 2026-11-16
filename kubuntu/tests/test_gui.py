@@ -113,6 +113,28 @@ class GuiTests(unittest.TestCase):
         self.assertEqual(len(self.window.trays), 3)
         self.assertEqual(len(self.window.headings), 3)
 
+    def test_hover_refresh_is_shared_and_throttled(self):
+        with patch.object(self.window, 'refresh', return_value=True) as refresh, patch(
+                'device_battery.gui.time.monotonic', side_effect=[10, 10.1, 14.9, 15]):
+            for _ in range(4):
+                self.window.hover_refresh()
+        self.assertEqual(refresh.call_count, 2)
+
+    def test_busy_hover_does_not_consume_cooldown_or_start_another_worker(self):
+        with patch.object(self.window, 'refresh', side_effect=[False, True]) as refresh, patch(
+                'device_battery.gui.time.monotonic', side_effect=[10, 10.1]):
+            self.window.hover_refresh()
+            self.window.hover_refresh()
+        self.assertEqual(refresh.call_count, 2)
+        self.window.preview = False
+        self.window.worker = Mock()
+        self.window.worker.isRunning.return_value = True
+        with patch('device_battery.gui.Worker') as worker:
+            self.assertFalse(self.window.refresh())
+            worker.assert_not_called()
+        self.window.worker = None
+        self.window.preview = True
+
     def test_readout_and_offline_clear(self):
         readings = [Reading(i, n, 73, "已連線", "2.4 GHz 接收器", "12:34:56", present=True) for i, n in enumerate(self.settings.names)]
         self.window.updated(readings)

@@ -19,6 +19,11 @@ internal static class ProfileTests {
  }
  static void Capture(Form form,string path){using(Bitmap image=new Bitmap(form.Width,form.Height)){form.DrawToBitmap(image,new Rectangle(Point.Empty,form.Size));image.Save(path,System.Drawing.Imaging.ImageFormat.Png);}}
  internal static void Run(){
+  long clock=0;int refreshed=0;HoverRefreshGate hover=new HoverRefreshGate(()=>clock);
+  Check(!hover.Refresh(()=>refreshed++,true),"busy hover must not refresh");
+  Check(hover.Refresh(()=>refreshed++,false),"first hover refresh");
+  clock=4999;Check(!hover.Refresh(()=>refreshed++,false),"hover event flood must be throttled");
+  clock=5000;Check(hover.Refresh(()=>refreshed++,false)&&refreshed==2,"hover refresh after cooldown");
   const string example="{\"version\":1,\"name\":\"我的鍵盤\",\"vid\":\"05AC\",\"pid\":\"024F\",\"protocol\":\"lofree\"}";
   DeviceProfile profile=DeviceProfile.Parse(example);Check(profile.vid=="05AC","hex normalization");
   string encoded="DBT1:"+Convert.ToBase64String(Encoding.UTF8.GetBytes(example)).Replace('+','-').Replace('/','_').TrimEnd('=');Check(DeviceProfile.Parse(encoded).Key()==profile.Key(),"DBT1 roundtrip");

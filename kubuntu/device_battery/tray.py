@@ -4,9 +4,23 @@ import json
 import os
 from pathlib import Path
 import sys
-from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QProcess, QSocketNotifier
+from PySide6.QtCore import QBuffer, QByteArray, QEvent, QIODevice, QProcess, QSocketNotifier, Signal
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
+
+
+def automatic_refresh_interval():
+    desktop = os.environ.get("XDG_CURRENT_DESKTOP", "").lower()
+    return 5000 if "kde" in desktop or "plasma" in desktop or os.environ.get("KDE_FULL_SESSION") == "true" else 30000
+
+
+class HoverTrayIcon(QSystemTrayIcon):
+    hovered = Signal()
+
+    def event(self, event):
+        if event.type() in (QEvent.Type.ToolTip, QEvent.Type.Enter):
+            self.hovered.emit()
+        return super().event(event)
 
 
 class DeviceTray:
@@ -26,7 +40,7 @@ class DeviceTray:
         if self.closed:
             self.buffer = b""
             return
-        actions = {"open": parent.show_dashboard, "refresh": parent.refresh,
+        actions = {"open": parent.show_dashboard, "refresh": parent.refresh, "hover": parent.hover_refresh,
                    "add": parent.add_device, "rename": lambda: parent.rename(slot),
                    "quit": parent.quit_app}
         while b"\n" in self.buffer:
@@ -71,7 +85,8 @@ def main():
     app = QApplication([sys.argv[0]])
     app.setQuitOnLastWindowClosed(False)
     app.setApplicationName(sys.argv[1])
-    tray = QSystemTrayIcon()
+    tray = HoverTrayIcon()
+    tray.hovered.connect(lambda: print("hover", flush=True))
     menu = QMenu()
     title = menu.addAction(sys.argv[1])
     title.setEnabled(False)

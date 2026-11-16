@@ -14,6 +14,13 @@ using System.Web.Script.Serialization;
 using System.Windows.Forms;
 using Microsoft.Win32.SafeHandles;
 
+internal sealed class HoverRefreshGate {
+ readonly Func<long> clock;long last=long.MinValue/2;
+ internal static readonly HoverRefreshGate Shared=new HoverRefreshGate();
+ internal HoverRefreshGate(Func<long> milliseconds=null){clock=milliseconds??(()=> (long)(System.Diagnostics.Stopwatch.GetTimestamp()*1000.0/System.Diagnostics.Stopwatch.Frequency));}
+ internal bool Refresh(Action action,bool blocked){if(blocked)return false;long now=clock();if(now-last<5000)return false;last=now;action();return true;}
+}
+
 internal sealed class DeviceProfile {
  public int version=1;public string name,vid,pid,protocol;
  internal static readonly string[] Protocols={"lofree","hecate-original","hecate-upgraded"};
@@ -216,7 +223,7 @@ internal sealed class DeviceManager:IDisposable {
   });
  }
  void RenderIcons(){foreach(AddedDevice device in Devices){Reading reading; if(!Latest.TryGetValue(device.Id,out reading))continue;NotifyIcon icon;
-   if(!icons.TryGetValue(device.Id,out icon)){string id=device.Id;ContextMenuStrip menu=new ContextMenuStrip();menu.Items.Add("開啟裝置總覽",null,(s,e)=>show());menu.Items.Add("立即刷新",null,(s,e)=>Refresh());menu.Items.Add("重新命名",null,(s,e)=>Rename(null,id));menu.Items.Add("編輯協定代碼",null,(s,e)=>Edit(null,id));menu.Items.Add("刪除",null,(s,e)=>Delete(null,id));icon=new NotifyIcon{ContextMenuStrip=menu};icon.DoubleClick+=(s,e)=>show();icons[id]=icon;}
+   if(!icons.TryGetValue(device.Id,out icon)){string id=device.Id;ContextMenuStrip menu=new ContextMenuStrip();menu.Items.Add("開啟裝置總覽",null,(s,e)=>show());menu.Items.Add("立即刷新",null,(s,e)=>Refresh());menu.Items.Add("重新命名",null,(s,e)=>Rename(null,id));menu.Items.Add("編輯協定代碼",null,(s,e)=>Edit(null,id));menu.Items.Add("刪除",null,(s,e)=>Delete(null,id));icon=new NotifyIcon{ContextMenuStrip=menu};icon.DoubleClick+=(s,e)=>show();icon.MouseMove+=(s,e)=>HoverRefreshGate.Shared.Refresh(Refresh,busy||closed);icons[id]=icon;}
    Icon old=icon.Icon;icon.Icon=TrayApp.MakeIcon(device.Profile!=null&&device.Profile.protocol=="lofree",reading.Percent);if(old!=null)old.Dispose();string tip=device.Name+"\n"+(reading.Percent.HasValue?reading.Percent+"%":reading.Status);icon.Text=tip.Length>63?tip.Substring(0,63):tip;icon.Visible=reading.Present;
   }}
  public void Dispose(){closed=true;foreach(string id in icons.Keys.ToList())RemoveIcon(id);}

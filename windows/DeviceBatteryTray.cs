@@ -239,6 +239,7 @@ internal sealed class TrayApp:ApplicationContext {
    menu.Items.Add("結束全部圖示",null,(s,e)=>ExitThread());
    icons[i]=new NotifyIcon{Icon=MakeIcon(i==0,null),Text=BatteryReader.Names[i]+" — 讀取中",ContextMenuStrip=menu,Visible=false};
    icons[i].DoubleClick+=(s,e)=>ShowReadings();
+   icons[i].MouseMove+=(s,e)=>HoverRefreshGate.Shared.Refresh(Refresh,busy||exiting);
   }
   timer=new System.Windows.Forms.Timer{Interval=30000};timer.Tick+=(s,e)=>Refresh();timer.Start();Refresh();ShowReadings();
   signalTimer=new System.Windows.Forms.Timer{Interval=500};signalTimer.Tick+=(s,e)=>{if(showSignal.WaitOne(0))ShowReadings();};signalTimer.Start();

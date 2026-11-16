@@ -1,6 +1,7 @@
 import hashlib
 import os
 import sys
+import time
 from pathlib import Path
 from PySide6.QtCore import Qt, QThread, Signal, QTimer, QLockFile
 from PySide6.QtGui import QColor, QFont, QFontDatabase, QIcon, QPainter, QPen, QPixmap
@@ -11,7 +12,7 @@ from PySide6.QtWidgets import (QApplication, QWidget, QLabel, QPushButton, QFram
 from .protocol import DEFAULT_NAMES, Reading, battery_color, poll
 from .profile_dialog import ProfileDialog
 from .usb_dialog import UsbMonitor
-from .tray import DeviceTray
+from .tray import DeviceTray, automatic_refresh_interval
 from .system_devices import discover, read_devices
 from .settings import Settings, autostart_path, desktop_entry
 
@@ -149,6 +150,8 @@ class Dashboard(QWidget):
         super().__init__()
         self.settings = settings
         self.preview = preview
+        self.last_hover_refresh = float("-inf")
+        self.refresh_interval = automatic_refresh_interval()
         self.worker = None
         self.scanners = []
         self.trays = []
@@ -194,7 +197,7 @@ class Dashboard(QWidget):
         self.empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.empty.setWordWrap(True)
         root.addWidget(self.empty, 1)
-        root.addWidget(label("每 30 秒刷新 · 關閉視窗後仍在系統匣執行", "muted"))
+        root.addWidget(label(f"每 {self.refresh_interval // 1000} 秒自動刷新 · 關閉視窗後仍在系統匣執行", "muted"))
         footer = QHBoxLayout()
         self.startup = QCheckBox("登入時自動啟動")
         self.startup.setChecked(autostart_path().exists() if not preview else False)
@@ -212,7 +215,7 @@ class Dashboard(QWidget):
                 self.create_tray(slot)
             self.timer = QTimer(self)
             self.timer.timeout.connect(self.refresh)
-            self.timer.start(30000)
+            self.timer.start(self.refresh_interval)
             QTimer.singleShot(0, self.refresh)
             QTimer.singleShot(1500, self.check_tray)
         self.render_readings()
@@ -484,9 +487,16 @@ class Dashboard(QWidget):
                 self.headings[i].setText(reading.name)
                 self.trays[i].setVisible(reading.present)
 
+    def hover_refresh(self):
+        now = time.monotonic()
+        if now - self.last_hover_refresh < 5:
+            return
+        if self.refresh():
+            self.last_hover_refresh = now
+
     def refresh(self):
         if self.preview or QApplication.activeModalWidget() or (self.worker and self.worker.isRunning()):
-            return
+            return False
         self.refresh_button.setEnabled(False)
         self.refresh_button.setText("刷新中…")
         self.add_button.setEnabled(False)
@@ -496,6 +506,7 @@ class Dashboard(QWidget):
         self.worker.completed.connect(lambda readings: self.updated(readings, device_ids))
         self.worker.finished.connect(self.worker_finished)
         self.worker.start()
+        return True
 
     def worker_finished(self):
         self.add_button.setEnabled(True)
