@@ -61,7 +61,7 @@ python3 -m venv .venv
 QT_QPA_PLATFORM=offscreen .venv/bin/python -m unittest discover -s tests -v
 ```
 
-目前 42 項 Python／Qt 測試通過，包含拔除隱藏、接收器無電量仍保留圖示、Linux 後端選擇及存取錯誤診斷。Kubuntu 電量讀取已由作者實測確認；新 `.deb` 安裝流程仍待桌面實測。
+目前 47 項 Python／Qt 測試通過，包含拔除隱藏、接收器無電量仍保留圖示、Linux 後端選擇及存取錯誤診斷。Kubuntu 電量讀取已由作者實測確認；新 `.deb` 安裝流程仍待桌面實測。
 
 ## 待處理
 
